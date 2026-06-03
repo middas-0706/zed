@@ -43,7 +43,7 @@ use ui::App;
 use util::markdown::MarkdownEscaped;
 use util::path_list::PathList;
 use util::{
-    ResultExt, get_default_system_shell_preferring_bash,
+    ResultExt, get_default_system_shell, get_default_system_shell_preferring_bash,
     paths::{PathStyle, is_absolute},
 };
 use uuid::Uuid;
@@ -3164,7 +3164,21 @@ impl AcpThread {
                             .remote_client()
                             .and_then(|r| r.read(cx).default_system_shell())
                     })
-                    .unwrap_or_else(|| get_default_system_shell_preferring_bash());
+                    .unwrap_or_else(|| {
+                        if sandbox_wrap.is_some() {
+                            // The Windows sandbox runs commands under a
+                            // WRITE_RESTRICTED token, which Cygwin/MSYS (Git
+                            // Bash) can't initialize under — it fails to create
+                            // its signal pipe (`ERROR_ACCESS_DENIED`). Use the
+                            // native system shell (PowerShell/cmd) for
+                            // sandboxed commands instead. On macOS/Linux both
+                            // helpers return `/bin/sh`, so this only affects
+                            // Windows.
+                            get_default_system_shell()
+                        } else {
+                            get_default_system_shell_preferring_bash()
+                        }
+                    });
                 let (task_command, task_args) =
                     ShellBuilder::new(&Shell::Program(shell), is_windows)
                         .redirect_stdin_to_dev_null()
