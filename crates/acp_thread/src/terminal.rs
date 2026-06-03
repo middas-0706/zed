@@ -59,9 +59,8 @@ pub type SandboxConfigHandle = Box<dyn std::any::Any + Send>;
 /// duration of the spawned command — dropping it deletes any on-disk
 /// config the launcher reads at startup.
 ///
-/// On non-macOS hosts this is a no-op: the inputs pass through unchanged
-/// and the returned handle is `None`. (We don't yet have a sandbox
-/// integration for other platforms.)
+/// On hosts without a sandbox integration (Linux) this is a no-op: the inputs
+/// pass through unchanged and the returned handle is `None`.
 pub(crate) fn apply_sandbox_wrap(
     program: String,
     args: Vec<String>,
@@ -91,7 +90,27 @@ pub(crate) fn apply_sandbox_wrap(
             Some(Box::new(config_file) as SandboxConfigHandle),
         ))
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        let writable: Vec<&std::path::Path> = sandbox_wrap
+            .writable_paths
+            .iter()
+            .chain(sandbox_wrap.extra_write_paths.iter())
+            .map(|p| p.as_path())
+            .collect();
+        let permissions = sandbox::windows_sandbox::SandboxPermissions {
+            allow_network: sandbox_wrap.allow_network,
+            allow_fs_write: sandbox_wrap.allow_fs_write,
+        };
+        let (new_program, new_args, config) =
+            sandbox::windows_sandbox::wrap_invocation(&program, &args, &writable, permissions)?;
+        Ok((
+            new_program,
+            new_args,
+            Some(Box::new(config) as SandboxConfigHandle),
+        ))
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         // No sandbox integration available; ignore the wrap request and
         // let the command run with the agent's ambient permissions.

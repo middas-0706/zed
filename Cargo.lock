@@ -15814,7 +15814,12 @@ name = "sandbox"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "dunce",
+ "rand 0.9.4",
+ "serde",
+ "serde_json",
  "tempfile",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -22917,6 +22922,7 @@ dependencies = [
  "repl",
  "reqwest_client",
  "rope",
+ "sandbox",
  "search",
  "semver",
  "serde",

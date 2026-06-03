@@ -207,6 +207,17 @@ fn main() {
 
     let args = Args::parse();
 
+    // `zed --zed-sandbox-helper <policy>` runs zed as the Windows agent-terminal
+    // sandbox helper launcher: it spawns the real command under a restricted
+    // token attached to this process's (PTY) stdio and exits with its code.
+    // This must run before any heavy startup since the helper is spawned into
+    // the terminal in place of the shell.
+    #[cfg(target_os = "windows")]
+    if let Some(policy_path) = &args.zed_sandbox_helper {
+        let exit_code = sandbox::windows_sandbox::run_sandbox_helper(policy_path);
+        process::exit(exit_code);
+    }
+
     // `zed --askpass` Makes zed operate in nc/netcat mode for use with askpass
     #[cfg(not(target_os = "windows"))]
     if let Some(socket) = &args.askpass {
@@ -1869,6 +1880,13 @@ struct Args {
     #[cfg(target_os = "windows")]
     #[arg(long, hide = true)]
     etw_socket: Option<String>,
+
+    /// Run zed as the Windows agent-terminal sandbox helper launcher for the
+    /// policy file at this path. Set internally by the agent terminal tool;
+    /// not meant to be passed by hand.
+    #[cfg(target_os = "windows")]
+    #[arg(long = "zed-sandbox-helper", hide = true)]
+    zed_sandbox_helper: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug)]
