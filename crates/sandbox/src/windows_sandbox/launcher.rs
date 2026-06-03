@@ -11,7 +11,9 @@
 //! terminal layer kills *this* helper (timeout / cancel / Stop), the job's last
 //! handle closes and the kernel kills the whole child tree.
 
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use windows_sys::Win32::Foundation::HANDLE;
@@ -30,13 +32,55 @@ use super::token::{
 const HELPER_FAILURE_EXIT_CODE: i32 = 127;
 const INFINITE: u32 = u32::MAX;
 
+/// The fixed name of the helper's diagnostic log file, written next to the
+/// policy file (in the same temp directory).
+const HELPER_LOG_FILE: &str = "zed-sandbox-helper.log";
+
+/// Path to the helper's diagnostic log for a given policy file.
+pub fn helper_log_path(policy_path: &Path) -> PathBuf {
+    match policy_path.parent() {
+        Some(parent) => parent.join(HELPER_LOG_FILE),
+        None => PathBuf::from(HELPER_LOG_FILE),
+    }
+}
+
+/// Append a diagnostic line to the helper log file (and echo to stderr).
+/// Best-effort: failures to log are ignored.
+fn helper_log(policy_path: &Path, message: &str) {
+    let seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let line = format!("[{seconds}] {message}\n");
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(helper_log_path(policy_path))
+    {
+        let _ = file.write_all(line.as_bytes());
+    }
+    eprintln!("zed sandbox helper: {message}");
+}
+
 /// Run the sandbox helper for the policy at `policy_path` and return the exit
 /// code the helper process should exit with. Never panics.
 pub fn run_sandbox_helper(policy_path: &Path) -> i32 {
+    // Record entry first thing, so the log file's existence confirms the helper
+    // branch was reached (vs. the full app booting in the PTY).
+    helper_log(
+        policy_path,
+        &format!(
+            "helper started; argv={:?}",
+            std::env::args().collect::<Vec<_>>()
+        ),
+    );
     match run(policy_path) {
-        Ok(code) => code,
+        Ok(code) => {
+            helper_log(policy_path, &format!("helper exiting with code {code}"));
+            code
+        }
         Err(error) => {
-            eprintln!("zed sandbox helper failed: {error:#}");
+            helper_log(policy_path, &format!("helper failed: {error:#}"));
             HELPER_FAILURE_EXIT_CODE
         }
     }
@@ -44,6 +88,13 @@ pub fn run_sandbox_helper(policy_path: &Path) -> i32 {
 
 fn run(policy_path: &Path) -> Result<i32> {
     let policy = read_policy(policy_path)?;
+    helper_log(
+        policy_path,
+        &format!(
+            "parsed policy: program={}, args={:?}, writable_dirs={:?}, allow_fs_write={}",
+            policy.program, policy.args, policy.writable_directories, policy.allow_fs_write
+        ),
+    );
 
     let mut argv = Vec::with_capacity(policy.args.len() + 1);
     argv.push(policy.program.clone());
@@ -62,14 +113,24 @@ fn run(policy_path: &Path) -> Result<i32> {
     // on drop.
     let (restricted_token, acl_cleanup): (Option<OwnedHandle>, Option<AceCleanup>) =
         if policy.allow_fs_write {
+            helper_log(
+                policy_path,
+                "allow_fs_write set; spawning with ambient token",
+            );
             (None, None)
         } else {
-            match build_write_restriction(&policy.writable_directories) {
-                Ok((token, cleanup)) => (Some(token), Some(cleanup)),
+            match build_write_restriction(policy_path, &policy.writable_directories) {
+                Ok((token, cleanup)) => {
+                    helper_log(policy_path, "built write-restricted token");
+                    (Some(token), Some(cleanup))
+                }
                 Err(error) => {
-                    eprintln!(
-                        "zed sandbox helper: filesystem isolation unavailable, running command \
-                         without write restriction: {error:#}"
+                    helper_log(
+                        policy_path,
+                        &format!(
+                            "filesystem isolation unavailable, running without write \
+                             restriction: {error:#}"
+                        ),
                     );
                     (None, None)
                 }
@@ -77,12 +138,18 @@ fn run(policy_path: &Path) -> Result<i32> {
         };
     let token_raw = restricted_token.as_ref().map(OwnedHandle::raw);
 
+    helper_log(
+        policy_path,
+        &format!("spawning child (restricted={})", token_raw.is_some()),
+    );
     let child = unsafe { spawn_suspended(token_raw, &argv) }
         .with_context(|| format!("failed to launch sandboxed command: {}", policy.program))?;
     unsafe { job.assign(child.process())? };
     child.resume()?;
+    helper_log(policy_path, "child resumed; waiting for exit");
 
     let exit_code = wait_for_exit(child.process());
+    helper_log(policy_path, &format!("child exited with code {exit_code}"));
 
     // Best-effort: drop the restricted token before revoking ACEs so no live
     // token references the capability SID, then remove the ACEs we added.
@@ -102,7 +169,10 @@ fn read_policy(policy_path: &Path) -> Result<SandboxPolicy> {
 /// Build the `WRITE_RESTRICTED` token and grant the per-session capability SID
 /// write access to each writable root. Returns the token plus a cleanup guard
 /// that revokes the ACEs on drop.
-fn build_write_restriction(writable_directories: &[PathBuf]) -> Result<(OwnedHandle, AceCleanup)> {
+fn build_write_restriction(
+    policy_path: &Path,
+    writable_directories: &[PathBuf],
+) -> Result<(OwnedHandle, AceCleanup)> {
     let cap_sid = LocalSid::from_string(&random_capability_sid())
         .context("failed to mint sandbox capability SID")?;
 
@@ -124,7 +194,12 @@ fn build_write_restriction(writable_directories: &[PathBuf]) -> Result<(OwnedHan
 
     let mut applied_roots: Vec<PathBuf> = Vec::new();
     for root in &roots {
-        unsafe { acl::add_allow_write_ace(root, cap_sid.as_ptr())? };
+        unsafe { acl::add_allow_write_ace(root, cap_sid.as_ptr()) }
+            .with_context(|| format!("failed to grant write access to {}", root.display()))?;
+        helper_log(
+            policy_path,
+            &format!("granted write ACE on {}", root.display()),
+        );
         applied_roots.push(root.clone());
     }
 

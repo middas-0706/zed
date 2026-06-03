@@ -160,6 +160,20 @@ pub fn wrap_invocation(
         })?
         .to_string();
 
+    // Diagnostic breadcrumb in Zed.log (this runs in the main, logging-
+    // initialized process). The helper subprocess additionally appends to
+    // `<temp>/zed-sandbox-helper.log`.
+    log::info!(
+        "windows sandbox: wrapping `{}` ({} args); helper={helper}, policy={policy_path}, \
+         writable_dirs={}, allow_fs_write={}, allow_network={}; helper log at {}",
+        policy.program,
+        policy.args.len(),
+        policy.writable_directories.len(),
+        policy.allow_fs_write,
+        policy.allow_network,
+        launcher::helper_log_path(std::path::Path::new(&policy_path)).display(),
+    );
+
     Ok((
         helper,
         vec![SANDBOX_HELPER_FLAG.to_string(), policy_path],

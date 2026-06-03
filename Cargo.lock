@@ -15815,6 +15815,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "dunce",
+ "log",
  "rand 0.9.4",
  "serde",
  "serde_json",
