@@ -8,7 +8,7 @@ use crate::{
 use anyhow::Result;
 use edit_prediction_types::{
     EditPrediction, EditPredictionDelegate, EditPredictionDiscardReason, EditPredictionIconSet,
-    interpolate_edits,
+    EditPredictionRequestTrigger, interpolate_edits,
 };
 use gpui::{App, Context, Entity, Task, TaskExt};
 use icons::IconName;
@@ -78,6 +78,7 @@ impl EditPredictionDelegate for CopilotEditPredictionDelegate {
         buffer: Entity<Buffer>,
         cursor_position: language::Anchor,
         debounce: bool,
+        _trigger: EditPredictionRequestTrigger,
         cx: &mut Context<Self>,
     ) {
         let copilot = self.copilot.clone();

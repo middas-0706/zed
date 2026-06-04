@@ -532,7 +532,13 @@ async fn test_edit_prediction_refresh_suppressed_while_following(cx: &mut gpui::
     propose_edits(&provider, vec![(8..8, "42")], &mut cx);
 
     cx.update_editor(|editor, window, cx| {
-        editor.refresh_edit_prediction(false, false, window, cx);
+        editor.refresh_edit_prediction(
+            false,
+            false,
+            EditPredictionRequestTrigger::Other,
+            window,
+            cx,
+        );
         editor.update_visible_edit_prediction(window, cx);
     });
 
@@ -548,7 +554,13 @@ async fn test_edit_prediction_refresh_suppressed_while_following(cx: &mut gpui::
 
     cx.update_editor(|editor, window, cx| {
         editor.leader_id = Some(CollaboratorId::PeerId(PeerId::default()));
-        editor.refresh_edit_prediction(false, false, window, cx);
+        editor.refresh_edit_prediction(
+            false,
+            false,
+            EditPredictionRequestTrigger::Other,
+            window,
+            cx,
+        );
     });
 
     assert_eq!(
@@ -563,7 +575,13 @@ async fn test_edit_prediction_refresh_suppressed_while_following(cx: &mut gpui::
 
     cx.update_editor(|editor, window, cx| {
         editor.leader_id = None;
-        editor.refresh_edit_prediction(false, false, window, cx);
+        editor.refresh_edit_prediction(
+            false,
+            false,
+            EditPredictionRequestTrigger::Other,
+            window,
+            cx,
+        );
     });
 
     assert_eq!(
@@ -1763,6 +1781,7 @@ impl EditPredictionDelegate for FakeEditPredictionDelegate {
         _buffer: gpui::Entity<language::Buffer>,
         _cursor_position: language::Anchor,
         _debounce: bool,
+        _trigger: edit_prediction_types::EditPredictionRequestTrigger,
         _cx: &mut gpui::Context<Self>,
     ) {
         self.refresh_count.fetch_add(1, atomic::Ordering::SeqCst);
@@ -1841,6 +1860,7 @@ impl EditPredictionDelegate for FakeNonZedEditPredictionDelegate {
         _buffer: gpui::Entity<language::Buffer>,
         _cursor_position: language::Anchor,
         _debounce: bool,
+        _trigger: edit_prediction_types::EditPredictionRequestTrigger,
         _cx: &mut gpui::Context<Self>,
     ) {
     }
